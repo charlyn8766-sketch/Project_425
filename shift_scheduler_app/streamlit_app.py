@@ -1,7 +1,21 @@
 
     import streamlit as st
-    import pandas as pd
-    import numpy as np
+
+    # --- Guarded third-party imports with helpful messages ---
+    try:
+        import pandas as pd
+    except Exception as e:
+        st.error("Failed to import **pandas**. Please ensure it is installed.")
+        st.code("pip install pandas>=2.0")
+        st.stop()
+
+    try:
+        import numpy as np
+    except Exception as e:
+        st.error("Failed to import **numpy**. Please ensure it is installed.")
+        st.code("pip install numpy")
+        st.stop()
+
     from io import BytesIO
     import sys, os, importlib
 
@@ -112,9 +126,9 @@ Folder contents : {os.listdir(os.path.dirname(__file__)) if os.path.dirname(__fi
     if st.button("Solve now", type="primary"):
         with st.spinner("Solving..."):
             try:
-                res = solve_schedule(demand, staff_df, S=S, max_deviation=max_dev, time_limit=time_limit, seed=seed)
+                res = solve_schedule(demand, st.session_state["staff_df"], S=S, max_deviation=max_dev, time_limit=time_limit, seed=seed)
             except TypeError:
-                res = solve_schedule(demand, staff_df, S=S, max_deviation=max_dev, time_limit=time_limit)
+                res = solve_schedule(demand, st.session_state["staff_df"], S=S, max_deviation=max_dev, time_limit=time_limit)
 
         st.success(f"Status: {res.get('status','N/A')}, Objective (total deviation): {res.get('objective', float('nan')):.4f}")
         if 'hours_df' in res:
@@ -127,13 +141,15 @@ Folder contents : {os.listdir(os.path.dirname(__file__)) if os.path.dirname(__fi
         # Per-worker 7x15 with color highlight
         st.markdown("### Per-worker Schedule (7×15, color = scheduled)")
         assignments_df = res.get("assignments_df", pd.DataFrame(columns=["name","day","start_slot","end_slot"]))
-        workers = list(staff_df['name'])
+        workers = list(st.session_state["staff_df"]['name'])
 
         def style_schedule(df):
             # green background for scheduled slots
             return df.style.apply(lambda s: ['background-color: #C6F6D5' if v==1 else '' for v in s], axis=1)
 
         worker_tables = {}
+        SLOT_LABELS = ["10-11","11-12","12-13","13-14","14-15","15-16","16-17","17-18","18-19","19-20","20-21","21-22","22-23","23-00","00-01"]
+        DAY_LABELS = ["Mon","Tue","Wed","Thu","Fri","Sat","Sun"]
         for w in workers:
             mat = np.zeros((7,15), dtype=int)
             subset = assignments_df[assignments_df['name'] == w]
@@ -151,10 +167,15 @@ Folder contents : {os.listdir(os.path.dirname(__file__)) if os.path.dirname(__fi
             with st.expander(f"{w}"):
                 st.dataframe(style_schedule(worker_tables[w]), use_container_width=True)
 
-        # Download per-worker Excel
+        # Download per-worker Excel (guard engine import)
         if worker_tables:
+            try:
+                import xlsxwriter  # noqa: F401
+                engine = "xlsxwriter"
+            except Exception:
+                engine = None  # Let pandas pick a default if available
             output = BytesIO()
-            with pd.ExcelWriter(output, engine="xlsxwriter") as writer:
+            with pd.ExcelWriter(output, engine=engine) as writer:
                 for w, df in worker_tables.items():
                     sheet_name = w[:31] if w else "Worker"
                     df.to_excel(writer, sheet_name=sheet_name)
