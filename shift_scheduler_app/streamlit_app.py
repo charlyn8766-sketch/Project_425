@@ -1,72 +1,151 @@
 
 import streamlit as st
 import pandas as pd
-from optimizer import build_and_solve_shift_model
+import numpy as np
+from io import BytesIO
+from optimizer import solve_schedule, build_shift_set
 
-st.set_page_config(page_title="员工排班优化系统", layout="wide")
-st.title("👷 员工排班优化系统")
+st.set_page_config(page_title="Shift Scheduler", layout="wide")
 
-time_slots = {
-    1: "10:00-11:00", 2: "11:00-12:00", 3: "12:00-13:00",
-    4: "13:00-14:00", 5: "14:00-15:00", 6: "15:00-16:00",
-    7: "16:00-17:00", 8: "17:00-18:00", 9: "18:00-19:00",
-    10: "19:00-20:00", 11: "20:00-21:00", 12: "21:00-22:00",
-    13: "22:00-23:00", 14: "23:00-00:00", 15: "00:00-01:00"
-}
+st.title("Shift Scheduler (Streamlit + PuLP)")
 
-D = list(range(1,8))
-T = list(range(1,16))
-S = [(s,e) for s in T for e in T if 4 <= e - s <= 8]
+SLOT_LABELS = ["10-11","11-12","12-13","13-14","14-15","15-16","16-17","17-18","18-19","19-20","20-21","21-22","22-23","23-00","00-01"]
+DAY_LABELS = ["Mon","Tue","Wed","Thu","Fri","Sat","Sun"]
 
-st.sidebar.title("🔧 参数设置")
-all_workers = ["Ana", "Vanessa_M", "Ines", "Yuliia", "Giulia", "Tomas", 
-               "Ana_Bernabe", "Raul_Calero", "Jose_Antonio", "Haely"]
-W = st.sidebar.multiselect("选择参与排班的员工", all_workers, default=all_workers[:5])
+with st.sidebar:
+    st.header("Configuration")
+    max_dev = st.number_input("Max deviation per slot (people)", min_value=0.0, value=2.5, step=0.5)
+    time_limit = st.number_input("Solver time limit (seconds)", min_value=10, value=180, step=10)
+    seed = st.number_input("Random seed (for reproducibility)", min_value=0, value=42, step=1)
 
-MinHw = {}
-MaxHw = {}
-for w in W:
-    col1, col2 = st.sidebar.columns(2)
-    with col1:
-        MinHw[w] = st.number_input(f"{w} 最小小时", 15, 40, 25, key=f"{w}_min")
-    with col2:
-        MaxHw[w] = st.number_input(f"{w} 最大小时", 15, 45, 32, key=f"{w}_max")
+    st.markdown("---")
+    st.subheader("Demand CSV")
+    st.caption("Upload a 7x15 CSV (no header): rows=Mon..Sun, cols=15 hourly slots (10-11,...,00-01).")
+    demand_file = st.file_uploader("Upload sales_demand_template.csv", type=["csv"])
 
-Max_Deviation = st.sidebar.slider("最大允许人数偏差", 0.0, 5.0, value=2.5, step=0.1)
-time_limit = st.sidebar.number_input("求解器最大运行时间（秒）", min_value=10, value=120)
+    st.markdown("---")
+    st.subheader("Staff table")
+    st.caption("Edit staff below. You can add or delete rows. Download/Upload to reuse.")
+    uploaded_staff = st.file_uploader("Upload staff CSV (optional)", type=["csv"], key="staff_csv")
+    if uploaded_staff is not None:
+        staff_df_init = pd.read_csv(uploaded_staff)
+    else:
+        staff_df_init = pd.DataFrame([
+            {"name":"Ana","min_week_hours":30,"max_week_hours":39,"contract_hours":30,"weekend_only":False},
+            {"name":"Vanessa","min_week_hours":25,"max_week_hours":33,"contract_hours":25,"weekend_only":False},
+            {"name":"Ines","min_week_hours":30,"max_week_hours":39,"contract_hours":30,"weekend_only":False},
+            {"name":"Yuliia","min_week_hours":20,"max_week_hours":26,"contract_hours":20,"weekend_only":False},
+        ])
+    staff_df = st.data_editor(
+        staff_df_init,
+        num_rows="dynamic",
+        use_container_width=True,
+        column_config={
+            "name": st.column_config.TextColumn("name", help="Unique worker name"),
+            # Renamed labels requested by user, keys stay the same to keep optimizer compatibility
+            "min_week_hours": st.column_config.NumberColumn("min work hour", help="Min weekly hours"),
+            "max_week_hours": st.column_config.NumberColumn("max work hour", help="Max weekly hours"),
+            "contract_hours": st.column_config.NumberColumn("contract hours", help="Reference contract hours"),
+            "weekend_only": st.column_config.CheckboxColumn("weekend only", help="If True, only Fri/Sat/Sun"),
+        },
+        hide_index=True
+    )
+    st.session_state["staff_df"] = staff_df
 
-uploaded_file = st.file_uploader("📤 上传销售需求 CSV（7行×15列，对应每小时需求）", type="csv")
-if uploaded_file:
-    df = pd.read_csv(uploaded_file)
-    if df.shape != (7, 15):
-        st.error("❌ CSV 格式应为 7 行 × 15 列！")
-        st.stop()
-    Demand = {d+1: df.iloc[d].tolist() for d in range(7)}
+    staff_csv = staff_df.to_csv(index=False).encode("utf-8")
+    st.download_button("Download staff CSV", staff_csv, file_name="staff.csv", mime="text/csv")
+
+# Load demand
+if demand_file is not None:
+    demand = pd.read_csv(demand_file, header=None)
 else:
-    st.info("使用内置默认销售需求")
-    Demand = {
-        1:[0.0,0.89,1.08,1.15,2.51,3.11,2.16,4.06,1.64,1.45,1.31,2.68,2.73,2.14,0.86],
-        2:[0.37,1.08,0.90,0.59,2.64,3.40,3.26,3.97,0.86,1.51,1.63,1.77,2.53,2.58,0.07],
-        3:[0.12,0.80,1.67,2.64,2.43,2.64,2.87,2.25,2.61,1.62,1.60,0.88,1.90,2.25,0.72],
-        4:[0.63,1.00,1.67,2.46,1.56,1.91,2.58,2.04,2.63,2.11,1.04,1.34,2.31,2.12,0.61],
-        5:[0.31,0.74,1.39,1.88,2.77,1.75,4.15,3.55,1.85,2.22,1.57,1.34,3.27,3.07,0.76],
-        6:[0.66,0.48,0.64,1.05,1.85,3.61,4.63,3.06,1.99,2.04,1.77,1.82,2.87,3.40,0.88],
-        7:[0.26,0.52,1.46,2.39,1.43,3.18,3.79,3.23,2.91,1.41,2.06,2.28,2.18,2.03,0.86]
-    }
+    st.info("Using a demo 7x15 demand matrix (no upload).")
+    demand = pd.DataFrame(np.array([
+        [0.00,0.89,1.08,1.15,2.51,3.11,2.16,4.06,1.64,1.45,1.31,2.68,2.73,2.14,0.86],
+        [0.37,1.08,0.90,0.59,2.64,3.40,3.26,3.97,0.86,1.51,1.63,1.77,2.53,2.58,0.07],
+        [0.12,0.80,1.67,2.64,2.43,2.64,2.87,2.25,2.61,1.62,1.60,0.88,1.90,2.25,0.72],
+        [0.63,1.00,1.67,2.46,1.56,1.91,2.58,2.04,2.63,2.11,1.04,1.34,2.31,2.12,0.61],
+        [0.31,0.74,1.39,1.88,2.77,1.75,4.15,3.55,1.85,2.22,1.57,1.34,3.27,3.07,0.76],
+        [0.66,0.48,0.64,1.05,1.85,3.61,4.63,3.06,1.99,2.04,1.77,1.82,2.87,3.40,0.88],
+        [0.26,0.52,1.46,2.39,1.43,3.18,3.79,3.23,2.91,1.41,2.06,2.28,2.18,2.03,0.86],
+    ]))
 
-if st.button("🚀 运行优化模型"):
-    with st.spinner("正在求解，请稍等..."):
-        result = build_and_solve_shift_model(W, D, T, S, MinHw, MaxHw, Demand, Max_Deviation, time_limit)
+# Validate shape
+if demand.shape != (7,15):
+    st.error(f"Demand CSV must be 7 rows x 15 columns. Current shape: {demand.shape}")
+    st.stop()
 
-    st.success("✅ 求解完成！")
-    st.write(f"🔧 状态：{result['status']}")
-    st.write(f"🎯 目标值：{result['objective']:.2f}")
-    st.write(f"⏱️ 求解时间：{result['elapsed_time']:.2f} 秒")
+# Build shift set (start<=end, length in [4,8])
+T = list(range(1,16))
+if 'build_shift_set' in globals():
+    S = build_shift_set(T, min_len=4, max_len=8)
+else:
+    # fallback: inclusive (s,e) with length in [4,8]
+    S = []
+    for s in T:
+        for e in T:
+            L = e - s + 1
+            if 4 <= L <= 8:
+                S.append((s,e))
 
-    df_result = pd.DataFrame(result["schedule"], columns=["员工", "星期", "时间段"])
-    df_result["时间"] = df_result["时间段"].map(time_slots)
-    df_result = df_result[["员工", "星期", "时间"]]
-    st.dataframe(df_result)
+st.markdown("### Run Optimizer")
+if st.button("Solve now", type="primary"):
+    with st.spinner("Solving..."):
+        # Try to call user's optimizer signature first
+        try:
+            res = solve_schedule(demand, staff_df, S=S, max_deviation=max_dev, time_limit=time_limit, seed=seed)
+        except TypeError:
+            # fallback: try minimal signature
+            res = solve_schedule(demand, staff_df, S=S, max_deviation=max_dev, time_limit=time_limit)
 
-    csv = df_result.to_csv(index=False).encode("utf-8-sig")
-    st.download_button("📥 下载排班结果 CSV", csv, file_name="schedule_result.csv", mime="text/csv")
+    st.success(f"Status: {res.get('status','N/A')}, Objective (total deviation): {res.get('objective', float('nan')):.4f}")
+    if 'hours_df' in res:
+        st.write("Weekly hours per worker")
+        st.dataframe(res['hours_df'], use_container_width=True)
+    if 'coverage_df' in res:
+        st.write("Coverage by day-slot (demand / staffed / under / over)")
+        st.dataframe(res['coverage_df'], use_container_width=True)
+
+    # ----------------------
+    # Per-worker 7x15 tables with color highlight
+    # ----------------------
+    st.markdown("### Per-worker Schedule (7×15, color = scheduled)")
+    assignments_df = res.get("assignments_df", pd.DataFrame(columns=["name","day","start_slot","end_slot"]))
+    workers = list(staff_df['name'])
+
+    def style_schedule(df):
+        # highlight cells with 1 using a light-green background
+        return df.style.apply(lambda s: ['background-color: #C6F6D5' if v==1 else '' for v in s], axis=1)
+
+    # Build and display styled tables
+    worker_tables = {}
+    for w in workers:
+        mat = np.zeros((7,15), dtype=int)
+        subset = assignments_df[assignments_df['name'] == w]
+        for _, row in subset.iterrows():
+            d = int(row['day']) - 1
+            s = int(row['start_slot']) - 1
+            e = int(row['end_slot']) - 1
+            s = max(0, min(14, s))
+            e = max(0, min(14, e))
+            mat[d, s:e+1] = 1
+        df = pd.DataFrame(mat, columns=SLOT_LABELS, index=DAY_LABELS)
+        worker_tables[w] = df
+
+    for w in workers:
+        with st.expander(f"{w}"):
+            st.dataframe(style_schedule(worker_tables[w]), use_container_width=True)
+
+    # Download all workers as a single Excel workbook (sheets per worker)
+    if worker_tables:
+        output = BytesIO()
+        with pd.ExcelWriter(output, engine="xlsxwriter") as writer:
+            for w, df in worker_tables.items():
+                sheet_name = w[:31] if w else "Worker"
+                df.to_excel(writer, sheet_name=sheet_name)
+        st.download_button(
+            "Download per-worker schedule (Excel)",
+            data=output.getvalue(),
+            file_name="per_worker_schedule.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        )

@@ -1,44 +1,48 @@
-# 员工排班优化系统（Streamlit + PuLP）
+# Shift Scheduler App (Streamlit + PuLP)
 
-本项目提供一个可视化的排班优化工具：上传 7×15 的需求 CSV（周一到周日、每日 15 个小时段），
-点击运行即可得到建议的人员排班（最小化总偏差 + 限制每个时段最大偏差）。
+A lightweight weekly shift scheduling tool. Upload a **7×15 demand CSV** (Mon..Sun × 15 hourly slots),
+edit your **staff list** directly in the app (add/remove rows), set a **max deviation per slot**, and solve.
 
-## 目录结构
+## Folder structure
 ```text
 shift_scheduler_app/
-├── streamlit_app.py           # Streamlit 界面（参数设置、文件上传、结果展示与下载）
-├── optimizer.py               # PuLP 优化模型（变量、约束、目标、CBC 求解）
-├── requirements.txt           # 依赖列表
-├── README.md                  # 使用说明
-└── sales_demand_template.csv  # 7行×15列模板（无表头）
+├── streamlit_app.py           # Streamlit UI (file upload, staff editor, parameters, results & downloads)
+├── optimizer.py               # PuLP model (variables, constraints, objective, CBC solve)
+├── requirements.txt           # Dependencies
+├── README.md                  # This guide
+└── sales_demand_template.csv  # 7×15 template (no header)
 ```
 
-## 快速开始
+## Quick start
 ```bash
-# 1) 安装依赖（建议使用虚拟环境）
 pip install -r requirements.txt
-
-# 2) 运行应用
 streamlit run streamlit_app.py
 ```
 
-## CSV 模板说明（sales_demand_template.csv）
-- **尺寸**：7 行 × 15 列（**不含表头**）。
-- **行**：第 1 行代表周一，第 7 行代表周日。
-- **列**：对应 15 个时间段：10-11, 11-12, ..., 23-00, 00-01。
-- **数值**：每格填写该时段的**需求人数**（或“销售额/100”的近似人数）。
+## Demand CSV (sales_demand_template.csv)
+- **Shape**: 7 rows × 15 columns (no header).
+- **Rows**: 1=Monday, ..., 7=Sunday.
+- **Columns**: 15 hourly slots (10-11, 11-12, ..., 23-00, 00-01).
+- **Values**: headcount demand per slot (you can use sales/100 as an approximation).
 
-## 参数与约束（要点）
-- `Max_Deviation`：限制每个时段的偏差（under + over ≤ Max_Deviation）。
-- 每位员工每日工作时长 4~8 小时；每周最小/最大工时可在侧边栏设置。
-- 每位员工一周内有两天**连续**的休息日（通过变量 z 强制）。
-- 交班安全间隔：晚班与次日早班不会无缝衔接（避免 23:00-01:00 后紧接 10:00-11:00）。
-- 15 小时合同员工默认仅周五/周六/周日排班（若你在侧边栏设置某员工 Min=15，会自动启用该约束）。
+## Staff table (editable in UI)
+Columns:
+- `name` (string, unique)
+- `min_week_hours` (float/int)
+- `max_week_hours` (float/int)
+- `contract_hours` (float/int, info only)
+- `weekend_only` (bool) — if True, worker can only be scheduled on Fri/Sat/Sun
 
-## 常见问题
-- **求解器超时**：可在左侧「求解器最大运行时间」中调大，例如 300 秒。
-- **CBC 找不到**：PuLP 通常自带 CBC；若你的环境报错，请升级 PuLP（`pip install -U pulp`）
-  或在系统安装 COIN-OR CBC 后再运行。
+You can **Upload** an existing staff CSV or **Download** the current table for reuse.
 
----
-如需扩展新约束（例如法定休息、晚班上限、门店多点调度等），请在 `optimizer.py` 中按照现有风格添加。
+## Model (high level)
+- Decision: assign at most one shift per worker per day; each shift is 4–8 hours.
+- Coverage: minimize total deviation (under + over) with a **cap** per slot.
+- Per-worker weekly hours in [min_week_hours, max_week_hours].
+- Weekend-only workers: disallow Mon–Thu assignments.
+
+> Notes: Consecutive rest days, late-to-early gap, or other business rules can be added in `optimizer.py` in the same style.
+
+## Troubleshooting
+- If CBC is missing, upgrade PuLP (`pip install -U pulp`) or install COIN-OR CBC in your system.
+- Increase the solver time limit if the instance is large.
