@@ -19,6 +19,7 @@ import inspect
 from io import BytesIO
 import sys, os
 import math
+import time as _time
 
 # ------------------ Defaults ------------------
 DEFAULT_STAFF = [
@@ -111,7 +112,6 @@ def adapt_to_user_optimizer(demand_df, staff_df, max_dev):
     try:
         res = fn(W, D, T, S, MinHw, MaxHw, Demand, Max_Deviation=max_dev)
     except TypeError:
-        # if user requires time_limit positionally/kw but has a default, omit it; else try None
         try:
             res = fn(W, D, T, S, MinHw, MaxHw, Demand, Max_Deviation=max_dev, time_limit=None)
         except Exception as e:
@@ -145,7 +145,7 @@ def adapt_to_user_optimizer(demand_df, staff_df, max_dev):
                            "min_week_hours": MinHw[w], "max_week_hours": MaxHw[w]})
     out["hours_df"] = pd.DataFrame(hours_rows)
 
-    # Assignments in slot form; also we will aggregate to per-worker 7x15 later
+    # Assignments in slot form (each assigned slot as a 1-hour segment)
     out["assignments_df"] = pd.DataFrame([{"name": w, "day": d, "start_slot": t, "end_slot": t, "hours": 1}
                                           for (w, d, t) in schedule])
     return out
@@ -169,7 +169,6 @@ def call_any_solver(opt_module, demand_df, staff_df, S, max_deviation):
                  + ", ".join(candidate_names))
         st.stop()
 
-    import inspect
     sig = inspect.signature(fn)
     params = sig.parameters
     kw = {}
@@ -202,8 +201,12 @@ def call_any_solver(opt_module, demand_df, staff_df, S, max_deviation):
     else:
         return {"raw_result": res, "status":"OK", "objective": float("nan")}
 
+# ------------------ Streamlit UI ------------------
 st.set_page_config(page_title="Shift Scheduler", layout="wide")
 st.title("Shift Scheduler (Streamlit + PuLP)")
+st.caption(f"USING FILE: {__file__}")
+st.caption(f"LAST MODIFIED: {_time.strftime('%Y-%m-%d %H:%M:%S', _time.localtime(os.path.getmtime(__file__)))}")
+st.success("BUILD: WEEKLY_ONLY")
 
 SLOT_LABELS = ["10-11","11-12","12-13","13-14","14-15","15-16","16-17","17-18","18-19","19-20","20-21","21-22","22-23","23-00","00-01"]
 DAY_LABELS = ["Mon","Tue","Wed","Thu","Fri","Sat","Sun"]
@@ -247,12 +250,7 @@ with st.sidebar:
     staff_csv = staff_df.to_csv(index=False).encode("utf-8")
     st.download_button("Download staff CSV", staff_csv, file_name="staff.csv", mime="text/csv")
 
-# Load demand
-try:
-    import numpy as np
-except Exception:
-    pass
-
+# Load demand (or demo)
 if demand_file is not None:
     demand = pd.read_csv(demand_file, header=None)
 else:
@@ -272,7 +270,7 @@ if demand.shape != (7,15):
     st.error(f"Demand CSV must be 7 rows x 15 columns. Current shape: {demand.shape}")
     st.stop()
 
-# Build shift set for fallback path
+# Build shift set for fallback path (used by generic solver call)
 T = list(range(1,16))
 if opt_mod is not None and hasattr(opt_mod, "build_shift_set"):
     try:
@@ -282,50 +280,49 @@ if opt_mod is not None and hasattr(opt_mod, "build_shift_set"):
 else:
     S = build_shift_set_fallback(T, 4, 8)
 
-# --------- Visualization helper (UPDATED) ---------
-def render_weekly_demand_staffing_chart(coverage_df, SLOT_LABELS, DAY_LABELS):
+# --------- Visualization helper (WEEKLY ONLY) ---------
+def render_weekly_demand_staffing_chart(coverage_df, SLOT_LABELS):
     st.markdown("### Weekly Demand vs Staffing (aggregate over 7 days)")
 
-    # 按 slot 聚合一周所有天
     weekly_df = (coverage_df.groupby("slot")
                             .agg({"demand":"sum", "staffed":"sum"})
                             .reset_index()
                             .sort_values("slot"))
-    
-    # 用 slot label 显示横轴
+
     x_labels = SLOT_LABELS if len(weekly_df) == len(SLOT_LABELS) else [str(s) for s in weekly_df["slot"]]
 
-    # 画折线图：demand vs staffed
     line_df = pd.DataFrame({
         "Demand": weekly_df["demand"].to_numpy(),
         "Staffed": weekly_df["staffed"].to_numpy(),
     }, index=x_labels)
     st.line_chart(line_df)
 
-    # 显示 deviation summary
     deviation = weekly_df["staffed"] - weekly_df["demand"]
     c1, c2, c3 = st.columns(3)
     c1.metric("Total under", f"{max(0, (weekly_df['demand']-weekly_df['staffed']).sum()):.1f}")
     c2.metric("Total over", f"{max(0, (weekly_df['staffed']-weekly_df['demand']).sum()):.1f}")
     c3.metric("Max |deviation|", f"{float(abs(deviation).max()):.1f}")
 
-
+# --------- Main action ---------
 st.markdown("### Run Optimizer")
 if st.button("Solve now", type="primary"):
     with st.spinner("Solving..."):
+        # Prefer canonical adapter; else fallback generic caller
         res = adapt_to_user_optimizer(demand, st.session_state["staff_df"], max_dev)
         if res is None:
             res = call_any_solver(opt_mod, demand, st.session_state["staff_df"], S, max_deviation=max_dev)
 
     st.success(f"Status: {res.get('status','N/A')}, Objective (total deviation): {res.get('objective', float('nan')):.4f}")
+
     if 'hours_df' in res:
         st.write("Weekly hours per worker")
         st.dataframe(res['hours_df'], use_container_width=True)
+
     if 'coverage_df' in res:
         st.write("Coverage by day-slot (demand / staffed / under / over)")
         st.dataframe(res['coverage_df'], use_container_width=True)
-        # Charts
-       render_weekly_demand_staffing_chart(res["coverage_df"], SLOT_LABELS, DAY_LABELS)
+        # WEEKLY ONLY CHART
+        render_weekly_demand_staffing_chart(res["coverage_df"], SLOT_LABELS)
 
     # Per-worker 7x15 with color highlight
     st.markdown("### Per-worker Schedule (7×15, color = scheduled)")
@@ -335,12 +332,10 @@ if st.button("Solve now", type="primary"):
     def style_schedule(df):
         return df.style.apply(lambda s: ['background-color: #E6F4FF' if v==1 else '' for v in s], axis=1)
 
-    SLOT_LABELS = ["10-11","11-12","12-13","13-14","14-15","15-16","16-17","17-18","18-19","19-20","20-21","21-22","22-23","23-00","00-01"]
-    DAY_LABELS = ["Mon","Tue","Wed","Thu","Fri","Sat","Sun"]
     worker_tables = {}
     if not assignments_df.empty:
         for w in workers:
-            mat = np.zeros((7,15), dtype=int)
+            mat = __import__("numpy").zeros((7,15), dtype=int)
             subset = assignments_df[assignments_df['name'] == w]
             for _, row in subset.iterrows():
                 d = int(row['day']) - 1
