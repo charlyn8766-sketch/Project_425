@@ -81,39 +81,32 @@ MaxHw = to_hours_dict(staff_df, "max_week_hours")
 W = [str(w) for w in staff_df["name"].tolist()]
 
 
-# --------- Visualization helper (NEW) ---------
-def render_demand_staffing_charts(coverage_df, SLOT_LABELS, DAY_LABELS):
-    st.markdown("### Demand / Staffing / Deviation (by day)")
-    tabs = st.tabs(DAY_LABELS)
-    for day_idx, tab in enumerate(tabs, start=1):
-        with tab:
-            df_day = (coverage_df[coverage_df["day"] == day_idx]
-                      .sort_values("slot")
-                      .reset_index(drop=True))
-            # X labels
-            if len(df_day) == len(SLOT_LABELS):
-                x_labels = SLOT_LABELS
-            else:
-                x_labels = [str(s) for s in df_day["slot"]]
+# --------- Visualization helper (UPDATED) ---------
+def render_weekly_demand_staffing_chart(coverage_df, SLOT_LABELS, DAY_LABELS):
+    st.markdown("### Weekly Demand vs Staffing (aggregate over 7 days)")
 
-            # Line: demand vs staffed
-            line_df = pd.DataFrame({
-                "Demand": df_day["demand"].to_numpy(),
-                "Staffed": df_day["staffed"].to_numpy(),
-            }, index=x_labels)
-            st.caption("Demand vs Staffing")
-            st.line_chart(line_df)
+    # 按 slot 聚合一周所有天
+    weekly_df = (coverage_df.groupby("slot")
+                            .agg({"demand":"sum", "staffed":"sum"})
+                            .reset_index()
+                            .sort_values("slot"))
+    
+    # 用 slot label 显示横轴
+    x_labels = SLOT_LABELS if len(weekly_df) == len(SLOT_LABELS) else [str(s) for s in weekly_df["slot"]]
 
-            # Bar: deviation (staffed - demand)
-            deviation = (df_day["staffed"] - df_day["demand"]).to_numpy()
-            bar_df = pd.DataFrame({"Deviation": deviation}, index=x_labels)
-            st.caption("Deviation = Staffed − Demand")
-            st.bar_chart(bar_df)
+    # 画折线图：demand vs staffed
+    line_df = pd.DataFrame({
+        "Demand": weekly_df["demand"].to_numpy(),
+        "Staffed": weekly_df["staffed"].to_numpy(),
+    }, index=x_labels)
+    st.line_chart(line_df)
 
-            c1, c2, c3 = st.columns(3)
-            c1.metric("Total under", f"{df_day['under'].sum():.1f}")
-            c2.metric("Total over", f"{df_day['over'].sum():.1f}")
-            c3.metric("Max |deviation|", f"{float(abs(deviation).max()):.1f}")
+    # 显示 deviation summary
+    deviation = weekly_df["staffed"] - weekly_df["demand"]
+    c1, c2, c3 = st.columns(3)
+    c1.metric("Total under", f"{max(0, (weekly_df['demand']-weekly_df['staffed']).sum()):.1f}")
+    c2.metric("Total over", f"{max(0, (weekly_df['staffed']-weekly_df['demand']).sum()):.1f}")
+    c3.metric("Max |deviation|", f"{float(abs(deviation).max()):.1f}")
 
 if st.button("Solve", type="primary"):
     with st.spinner("Solving..."):
@@ -139,8 +132,9 @@ if st.button("Solve", type="primary"):
     cov_df = pd.DataFrame(rows).sort_values(["day","slot"])
     st.dataframe(cov_df, use_container_width=True)
 
-    # Charts by day
-    render_demand_staffing_charts(cov_df, SLOT_LABELS, DAY_LABELS)
+    # Charts 
+    render_weekly_demand_staffing_chart(res["coverage_df"], SLOT_LABELS, DAY_LABELS)
+
 
     # Downloads
     st.download_button("Download schedule CSV", sched_df.to_csv(index=False).encode("utf-8"),
