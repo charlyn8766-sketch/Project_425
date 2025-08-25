@@ -278,7 +278,7 @@ else:
     S = build_shift_set_fallback(T, 4, 8)
 
 # --------- Visualisation (UPDATED) ---------
-def render_weekly_demand_staffing_chart(coverage_df, SLOT_LABELS, DAY_LABELS):
+def render_weekly_demand_staffing_chart(coverage_df, SLOT_LABELS):
     st.markdown("### Weekly Demand vs Staffing (aggregate over 7 days)")
 
     # 按 slot 聚合一周所有天
@@ -324,7 +324,7 @@ if st.button("Solve now", type="primary"):
         st.write("Coverage by day-slot (demand / staffed / under / over)")
         st.dataframe(res['coverage_df'], use_container_width=True)
         # NEW: charts
-        render_weekly_demand_staffing_chart(res["coverage_df"], SLOT_LABELS, DAY_LABELS)
+        render_weekly_demand_staffing_chart(res["coverage_df"], SLOT_LABELS)
 
     # Per-worker 7x15 with color highlight
     st.markdown("### Per-worker Schedule (7×15, color = scheduled)")
