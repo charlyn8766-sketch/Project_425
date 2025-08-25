@@ -126,8 +126,8 @@ if st.button("Solve now", type="primary"):
     st.dataframe(coverage_df, use_container_width=True)
 
     # ---- Weekly line chart ONLY ----
-    st.markdown("### Weekly Demand vs Staffing (aggregate over 7 days)")
-    weekly_df = (coverage_df.groupby("slot")[["demand","staffed"]].sum()
+    st.markdown("### Weekly Demand vs Staffing (average per day)")
+    weekly_df = (coverage_df.groupby("slot")[["demand","staffed"]].mean()
                                .reindex(range(1,14))
                                .reset_index())
     line_df = pd.DataFrame({"Demand": weekly_df["demand"].to_numpy(),
