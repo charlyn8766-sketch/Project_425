@@ -318,8 +318,9 @@ if st.button("Solve now", type="primary"):
 
     if 'coverage_df' in res:
         st.write("Coverage by day-slot (demand / staffed / under / over)")
+        # keep the table (no daily charts)
         st.dataframe(res['coverage_df'], use_container_width=True)
-        # WEEKLY ONLY CHART
+        # weekly chart only
         render_weekly_demand_staffing_chart(res["coverage_df"], SLOT_LABELS)
 
     # Per-worker 7x15 with color highlight
