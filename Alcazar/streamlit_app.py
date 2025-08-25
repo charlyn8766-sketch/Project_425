@@ -5,14 +5,14 @@ import streamlit as st
 try:
     import pandas as pd
 except Exception as e:
-    st.error("Failed to import **pandas**. Please ensure it is installed.")
+    st.error("Failed to import pandas. Please ensure it is installed.")
     st.code("pip install pandas>=2.0")
     st.stop()
 
 try:
     import numpy as np
 except Exception as e:
-    st.error("Failed to import **numpy**. Please ensure it is installed.")
+    st.error("Failed to import numpy. Please ensure it is installed.")
     st.code("pip install numpy")
     st.stop()
 
@@ -58,7 +58,7 @@ except Exception as e1:
         opt_import_error = (e1, e2)
 
 def debug_import_error():
-    st.error("Failed to import `optimizer.py`. Please ensure it is in the same folder as this file.")
+    st.error("Failed to import optimizer.py. Please ensure it is in the same folder as this file.")
     if opt_import_error is not None:
         e1, e2 = opt_import_error
         st.code(f"""
@@ -81,7 +81,7 @@ def build_shift_set_fallback(T, min_len=4, max_len=8):
 
 def adapt_to_user_optimizer(demand_df, staff_df, max_dev):
     """
-    If optimizer has `build_and_solve_shift_model`, adapt inputs accordingly and call it.
+    If optimizer has build_and_solve_shift_model, adapt inputs accordingly and call it.
     Returns a normalized dict if successful, else None.
     """
     if opt_mod is None or not hasattr(opt_mod, "build_and_solve_shift_model"):
@@ -113,11 +113,8 @@ def adapt_to_user_optimizer(demand_df, staff_df, max_dev):
     try:
         res = fn(W, D, T, S, MinHw, MaxHw, Demand, Max_Deviation=max_dev)
     except TypeError:
-        try:
-            res = fn(W, D, T, S, MinHw, MaxHw, Demand, Max_Deviation=max_dev, time_limit=None)
-        except Exception as e:
-            st.error(f"Failed to call build_and_solve_shift_model without a time limit: {e}")
-            st.stop()
+        # Some user versions require a time_limit arg; pass None
+        res = fn(W, D, T, S, MinHw, MaxHw, Demand, Max_Deviation=max_dev, time_limit=None)
 
     # Normalize to our expected outputs
     out = {}
@@ -166,7 +163,7 @@ def call_any_solver(opt_module, demand_df, staff_df, S, max_deviation):
             fn = getattr(opt_module, name); break
     if fn is None:
         st.error("No solver function found in optimizer.py. "
-                 "Either provide `build_and_solve_shift_model` or one of: "
+                 "Either provide build_and_solve_shift_model or one of: "
                  + ", ".join(candidate_names))
         st.stop()
 
@@ -203,12 +200,11 @@ def call_any_solver(opt_module, demand_df, staff_df, S, max_deviation):
         return {"raw_result": res, "status":"OK", "objective": float("nan")}
 
 # ------------------ Streamlit UI ------------------
-st.set_page_config(page_title="Shift Scheduler (Weekly Only)", layout="wide")
-st.title("Shift Scheduler (Streamlit + PuLP) — Weekly Chart Only")
+st.set_page_config(page_title="Shift Scheduler (Weekly Chart Only)", layout="wide")
+st.title("Shift Scheduler (Streamlit + PuLP)")
 st.caption(f"USING FILE: {__file__}")
 st.caption(f"LAST MODIFIED: {_time.strftime('%Y-%m-%d %H:%M:%S', _time.localtime(os.path.getmtime(__file__)))}")
 st.success("BUILD: WEEKLY_ONLY")
-st.warning("This version only shows the **weekly aggregate line chart** (no per-day charts or bar charts).")
 
 SLOT_LABELS = ["10-11","11-12","12-13","13-14","14-15","15-16","16-17","17-18","18-19","19-20","20-21","21-22","22-23","23-00","00-01"]
 DAY_LABELS = ["Mon","Tue","Wed","Thu","Fri","Sat","Sun"]
