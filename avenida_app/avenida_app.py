@@ -126,14 +126,21 @@ if st.button("Solve now", type="primary"):
     st.dataframe(coverage_df, use_container_width=True)
 
     # ---- Weekly line chart ONLY ----
-    st.markdown("### Weekly Demand vs Staffing (average per day)")
-    weekly_df = (coverage_df.groupby("slot")[["demand","staffed"]].mean()
-                               .reindex(range(1,14))
-                               .reset_index())
-    line_df = pd.DataFrame({"Demand": weekly_df["demand"].to_numpy(),
-                            "Staffed": weekly_df["staffed"].to_numpy()},
-                           index=SLOT_LABELS)
-    st.line_chart(line_df)
+st.markdown("### Weekly Demand vs Staffing (average per day)")
+# Explicit average: sum over 7 days, then divide by 7
+weekly_sum = (coverage_df.groupby("slot")[["demand","staffed"]]
+                           .sum()
+                           .reindex(range(1,14))
+                           .reset_index())
+weekly_avg = weekly_sum.copy()
+weekly_avg[["demand","staffed"]] = weekly_avg[["demand","staffed"]] / 7.0
+
+line_df = pd.DataFrame({
+    "Avg Demand": weekly_avg["demand"].to_numpy(),
+    "Avg Staffed": weekly_avg["staffed"].to_numpy()
+}, index=SLOT_LABELS)
+st.line_chart(line_df)
+st.caption("Averages computed as weekly totals divided by 7 days.")
 
     # Per-worker 7×13 schedule (blue highlight)
     st.markdown("### Per-worker Schedule (7×13, color = scheduled)")
