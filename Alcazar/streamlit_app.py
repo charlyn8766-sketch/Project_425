@@ -1,3 +1,4 @@
+
 import streamlit as st
 
 # --- Guarded third-party imports with helpful messages ---
@@ -202,11 +203,12 @@ def call_any_solver(opt_module, demand_df, staff_df, S, max_deviation):
         return {"raw_result": res, "status":"OK", "objective": float("nan")}
 
 # ------------------ Streamlit UI ------------------
-st.set_page_config(page_title="Shift Scheduler", layout="wide")
-st.title("Shift Scheduler (Streamlit + PuLP)")
+st.set_page_config(page_title="Shift Scheduler (Weekly Only)", layout="wide")
+st.title("Shift Scheduler (Streamlit + PuLP) — Weekly Chart Only")
 st.caption(f"USING FILE: {__file__}")
 st.caption(f"LAST MODIFIED: {_time.strftime('%Y-%m-%d %H:%M:%S', _time.localtime(os.path.getmtime(__file__)))}")
 st.success("BUILD: WEEKLY_ONLY")
+st.warning("This version only shows the **weekly aggregate line chart** (no per-day charts or bar charts).")
 
 SLOT_LABELS = ["10-11","11-12","12-13","13-14","14-15","15-16","16-17","17-18","18-19","19-20","20-21","21-22","22-23","23-00","00-01"]
 DAY_LABELS = ["Mon","Tue","Wed","Thu","Fri","Sat","Sun"]
