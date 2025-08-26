@@ -280,28 +280,44 @@ else:
 
 # --------- Visualization helper (WEEKLY ONLY) ---------
 def render_weekly_demand_staffing_chart(coverage_df, SLOT_LABELS):
-    st.markdown("### Weekly Demand vs Staffing (aggregate over 7 days)")
+    st.markdown("### Weekly Demand vs Staffing (average per day)")
 
+    # Aggregate by slot across days
     weekly_df = (coverage_df.groupby("slot")
                             .agg({"demand":"sum", "staffed":"sum"})
                             .reset_index()
                             .sort_values("slot"))
 
+    # Use the actual number of unique days present (usually 7)
+    try:
+        n_days = int(coverage_df["day"].nunique())
+        if n_days <= 0:
+            n_days = 7
+    except Exception:
+        n_days = 7
+
+    # Build x labels
     x_labels = SLOT_LABELS if len(weekly_df) == len(SLOT_LABELS) else [str(s) for s in weekly_df["slot"]]
 
+    # Compute averages
+    avg_demand = (weekly_df["demand"] / n_days).to_numpy()
+    avg_staffed = (weekly_df["staffed"] / n_days).to_numpy()
+
+    # Line chart: averages only
     line_df = pd.DataFrame({
-        "Demand": weekly_df["demand"].to_numpy(),
-        "Staffed": weekly_df["staffed"].to_numpy(),
+        "Demand (avg/day)": avg_demand,
+        "Staffed (avg/day)": avg_staffed,
     }, index=x_labels)
     st.line_chart(line_df)
 
+    # KPIs remain week totals for transparency (unchanged behavior except chart)
     deviation = weekly_df["staffed"] - weekly_df["demand"]
     c1, c2, c3 = st.columns(3)
-    c1.metric("Total under", f"{max(0, (weekly_df['demand']-weekly_df['staffed']).sum()):.1f}")
-    c2.metric("Total over", f"{max(0, (weekly_df['staffed']-weekly_df['demand']).sum()):.1f}")
-    c3.metric("Max |deviation|", f"{float(abs(deviation).max()):.1f}")
-
+    c1.metric("Total under (week sum)", f"{max(0, (weekly_df['demand']-weekly_df['staffed']).sum()):.1f}")
+    c2.metric("Total over (week sum)", f"{max(0, (weekly_df['staffed']-weekly_df['demand']).sum()):.1f}")
+    c3.metric("Max |daily deviation| (week)", f"{float(abs(deviation).max()):.2f}")
 # --------- Main action ---------
+
 st.markdown("### Run Optimizer")
 if st.button("Solve now", type="primary"):
     with st.spinner("Solving..."):
